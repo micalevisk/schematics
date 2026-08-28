@@ -51,6 +51,7 @@ function transform(options: ApplicationOptions): ApplicationOptions {
   // Guarantee the key exists so the templates can branch on it even when the
   // factory is invoked directly, bypassing the schema defaults.
   target.observe = target.observe ?? false;
+  target.createApplication = target.createApplication ?? true;
   target.specFileSuffix = normalizeToKebabOrSnakeCase(
     options.specFileSuffix || 'spec',
   );
@@ -92,8 +93,13 @@ function generate(options: ApplicationOptions, path: string): Source {
       ? 'ts-esm'
       : options.language!;
 
-  return apply(url(join('./files' as Path, templateDir)), [
-    options.spec
+  // An empty workspace has no application, hence no sources and no spec files
+  // to filter out; its templates live in a sibling tree.
+  const rootDir =
+    options.createApplication === false ? './workspace' : './files';
+
+  return apply(url(join(rootDir as Path, templateDir)), [
+    options.spec || options.createApplication === false
       ? noop()
       : filter((path) => {
           const languageExtension = options.language || 'ts';

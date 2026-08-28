@@ -6,5 +6,5 @@
     "types": ["vitest/globals", "node"]
   },
   "include": ["src", "test"],
-  "exclude": ["node_modules", "src/**/files/**"]
+  "exclude": ["node_modules", "src/**/files/**", "src/**/workspace/**"]
 }

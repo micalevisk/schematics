@@ -89,6 +89,11 @@
       "type": "boolean",
       "default": false,
       "description": "Preconfigure the application with @nestjs/observe."
+    },
+    "createApplication": {
+      "type": "boolean",
+      "default": true,
+      "description": "Create a new application in the workspace. Use --no-create-application for an empty monorepo workspace."
     }
   },
   "required": ["name"]

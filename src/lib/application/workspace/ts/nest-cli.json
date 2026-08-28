@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "monorepo": true,
+  "projects": {},
+  "compilerOptions": {
+    "deleteOutDir": true,
+    "builder": "rspack"
+  }
+}

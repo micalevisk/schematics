@@ -2,6 +2,7 @@ import {
   SchematicTestRunner,
   UnitTestTree,
 } from '@angular-devkit/schematics/testing';
+import { readFileSync } from 'fs';
 import * as path from 'path';
 import type { ApplicationOptions } from './application.schema.js';
 
@@ -689,6 +690,286 @@ describe('Application Factory', () => {
       expect(packageJson.devDependencies).toHaveProperty('jest');
       expect(packageJson.devDependencies).toHaveProperty('oxlint');
       expect(packageJson.devDependencies).not.toHaveProperty('eslint');
+    });
+  });
+
+  describe('when createApplication is false', () => {
+    describe('and the module type is "esm" (default)', () => {
+      it('should generate an empty workspace with no application sources', async () => {
+        const options: ApplicationOptions = {
+          name: 'workspace',
+          type: 'esm',
+          createApplication: false,
+        };
+        const tree: UnitTestTree = await runner.runSchematic(
+          'application',
+          options,
+        );
+
+        const files: string[] = tree.files;
+        expect(files.sort()).toEqual(
+          [
+            '/workspace/.gitignore',
+            '/workspace/.prettierrc',
+            '/workspace/README.md',
+            '/workspace/nest-cli.json',
+            '/workspace/oxlint.json',
+            '/workspace/package.json',
+            '/workspace/tsconfig.json',
+            '/workspace/vitest.config.e2e.ts',
+            '/workspace/vitest.config.ts',
+          ].sort(),
+        );
+        expect(files.some((file) => file.startsWith('/workspace/src/'))).toBe(
+          false,
+        );
+        expect(files.some((file) => file.startsWith('/workspace/test/'))).toBe(
+          false,
+        );
+        expect(files).not.toContain('/workspace/tsconfig.build.json');
+      });
+
+      it('should declare an empty monorepo in nest-cli.json with no default project', async () => {
+        const options: ApplicationOptions = {
+          name: 'workspace',
+          type: 'esm',
+          createApplication: false,
+        };
+        const tree: UnitTestTree = await runner.runSchematic(
+          'application',
+          options,
+        );
+
+        const nestCli = JSON.parse(
+          tree.readContent('/workspace/nest-cli.json'),
+        );
+        expect(nestCli.monorepo).toBe(true);
+        expect(nestCli.projects).toEqual({});
+        expect(nestCli.compilerOptions).toEqual({
+          deleteOutDir: true,
+          builder: 'rspack',
+        });
+        // There is no default project, so these must be absent.
+        expect(nestCli).not.toHaveProperty('root');
+        expect(nestCli).not.toHaveProperty('sourceRoot');
+        expect(nestCli).not.toHaveProperty('entryFile');
+      });
+
+      it('should generate a solution-style tsconfig.json', async () => {
+        const options: ApplicationOptions = {
+          name: 'workspace',
+          type: 'esm',
+          createApplication: false,
+        };
+        const tree: UnitTestTree = await runner.runSchematic(
+          'application',
+          options,
+        );
+
+        const tsconfig = JSON.parse(
+          tree.readContent('/workspace/tsconfig.json'),
+        );
+        expect(tsconfig.files).toEqual([]);
+        expect(tsconfig.references).toEqual([]);
+        expect(tsconfig).not.toHaveProperty('include');
+        expect(tsconfig).not.toHaveProperty('exclude');
+        expect(tsconfig.compilerOptions).not.toHaveProperty('baseUrl');
+        expect(tsconfig.compilerOptions.strict).toBe(true);
+      });
+
+      it('should generate workspace-shaped npm scripts', async () => {
+        const options: ApplicationOptions = {
+          name: 'workspace',
+          type: 'esm',
+          createApplication: false,
+        };
+        const tree: UnitTestTree = await runner.runSchematic(
+          'application',
+          options,
+        );
+
+        const packageJson = JSON.parse(
+          tree.readContent('/workspace/package.json'),
+        );
+        // Every `start*` script resolves the default project, which an empty
+        // workspace does not have.
+        const scriptNames = Object.keys(packageJson.scripts);
+        expect(scriptNames.filter((name) => name.startsWith('start'))).toEqual(
+          [],
+        );
+        expect(packageJson.scripts.format).toBe(
+          'prettier --write "apps/**/*.ts" "libs/**/*.ts"',
+        );
+        expect(packageJson.scripts.lint).toBe('oxlint apps/ libs/');
+        expect(packageJson.scripts.build).toBe('nest build');
+        // Root vitest config is workspace-scoped, so these keep working.
+        expect(packageJson.scripts.test).toBe('vitest run');
+        expect(packageJson.scripts['test:e2e']).toBe(
+          'vitest run --config ./vitest.config.e2e.ts',
+        );
+        expect(packageJson.type).toBe('module');
+        expect(packageJson.dependencies).toHaveProperty('@nestjs/core');
+        expect(packageJson.devDependencies).toHaveProperty('vitest');
+      });
+    });
+
+    describe('and the module type is "cjs"', () => {
+      it('should generate an empty workspace with a root jest config', async () => {
+        const options: ApplicationOptions = {
+          name: 'workspace',
+          type: 'cjs',
+          createApplication: false,
+        };
+        const tree: UnitTestTree = await runner.runSchematic(
+          'application',
+          options,
+        );
+
+        const files: string[] = tree.files;
+        expect(files.sort()).toEqual(
+          [
+            '/workspace/.gitignore',
+            '/workspace/.prettierrc',
+            '/workspace/README.md',
+            '/workspace/jest.config.ts',
+            '/workspace/nest-cli.json',
+            '/workspace/oxlint.json',
+            '/workspace/package.json',
+            '/workspace/tsconfig.json',
+          ].sort(),
+        );
+
+        const nestCli = JSON.parse(
+          tree.readContent('/workspace/nest-cli.json'),
+        );
+        expect(nestCli.monorepo).toBe(true);
+        expect(nestCli.projects).toEqual({});
+        expect(nestCli).not.toHaveProperty('sourceRoot');
+
+        const tsconfig = JSON.parse(
+          tree.readContent('/workspace/tsconfig.json'),
+        );
+        expect(tsconfig.files).toEqual([]);
+        expect(tsconfig.references).toEqual([]);
+        expect(tsconfig.compilerOptions.types).toEqual(['node', 'jest']);
+
+        const packageJson = JSON.parse(
+          tree.readContent('/workspace/package.json'),
+        );
+        expect(packageJson.type).toBeUndefined();
+        expect(
+          Object.keys(packageJson.scripts).filter((name) =>
+            name.startsWith('start'),
+          ),
+        ).toEqual([]);
+        expect(packageJson.scripts.test).toBe('jest');
+        // Under jest the e2e config is per-app (apps/<name>/test/jest-e2e.json),
+        // so there is nothing for a root `test:e2e` to point at.
+        expect(packageJson.scripts).not.toHaveProperty('test:e2e');
+      });
+    });
+
+    describe('and the language is "js"', () => {
+      it('should generate an empty workspace with no index.js', async () => {
+        const options: ApplicationOptions = {
+          name: 'workspace',
+          language: 'js',
+          createApplication: false,
+        };
+        const tree: UnitTestTree = await runner.runSchematic(
+          'application',
+          options,
+        );
+
+        const files: string[] = tree.files;
+        expect(files.sort()).toEqual(
+          [
+            '/workspace/.babelrc',
+            '/workspace/.gitignore',
+            '/workspace/.prettierrc',
+            '/workspace/README.md',
+            '/workspace/jest.config.js',
+            '/workspace/jsconfig.json',
+            '/workspace/nest-cli.json',
+            '/workspace/package.json',
+          ].sort(),
+        );
+        expect(files).not.toContain('/workspace/index.js');
+        expect(files).not.toContain('/workspace/nodemon.json');
+
+        const nestCli = JSON.parse(
+          tree.readContent('/workspace/nest-cli.json'),
+        );
+        expect(nestCli.monorepo).toBe(true);
+        expect(nestCli.language).toBe('js');
+        expect(nestCli.projects).toEqual({});
+        expect(nestCli).not.toHaveProperty('sourceRoot');
+
+        const packageJson = JSON.parse(
+          tree.readContent('/workspace/package.json'),
+        );
+        expect(
+          Object.keys(packageJson.scripts).filter((name) =>
+            name.startsWith('start'),
+          ),
+        ).toEqual([]);
+        expect(packageJson.devDependencies).not.toHaveProperty('nodemon');
+      });
+    });
+
+    describe('and spec files are disabled', () => {
+      it('should still generate the workspace unchanged', async () => {
+        const withSpec: UnitTestTree = await runner.runSchematic(
+          'application',
+          {
+            name: 'workspace',
+            type: 'esm',
+            createApplication: false,
+          } satisfies ApplicationOptions,
+        );
+        const withoutSpec: UnitTestTree = await runner.runSchematic(
+          'application',
+          {
+            name: 'workspace',
+            type: 'esm',
+            spec: false,
+            createApplication: false,
+          } satisfies ApplicationOptions,
+        );
+
+        expect(withoutSpec.files.sort()).toEqual(withSpec.files.sort());
+      });
+    });
+
+    describe('template hygiene', () => {
+      const sharedFiles: Record<string, string[]> = {
+        'ts-esm': [
+          '.gitignore',
+          '.prettierrc',
+          'oxlint.json',
+          'vitest.config.ts',
+          'vitest.config.e2e.ts',
+        ],
+        ts: ['.gitignore', '.prettierrc', 'oxlint.json', 'jest.config.ts'],
+        js: ['.gitignore', '.prettierrc', '.babelrc', 'jsconfig.json'],
+      };
+
+      for (const [variant, names] of Object.entries(sharedFiles)) {
+        for (const name of names) {
+          it(`should keep ${variant}/${name} identical between files/ and workspace/`, () => {
+            const base = path.join(process.cwd(), 'src/lib/application');
+            const fromFiles = readFileSync(
+              path.join(base, 'files', variant, name),
+              'utf-8',
+            );
+            const fromWorkspace = readFileSync(
+              path.join(base, 'workspace', variant, name),
+              'utf-8',
+            );
+            expect(fromWorkspace).toEqual(fromFiles);
+          });
+        }
+      }
     });
   });
 });

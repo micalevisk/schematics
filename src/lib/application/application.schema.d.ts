@@ -63,4 +63,10 @@ export interface ApplicationOptions {
    * @default false
    */
   observe?: boolean;
+  /**
+   * Create a new application in the workspace. When `false`, an empty monorepo
+   * workspace is generated and applications are added later with `nest g app`.
+   * @default true
+   */
+  createApplication?: boolean;
 }

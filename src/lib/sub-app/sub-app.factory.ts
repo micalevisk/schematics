@@ -148,6 +148,11 @@ function updateTsConfig(projectRoot: string, appName: string) {
     if (!host.exists('tsconfig.json')) {
       return host;
     }
+    // A workspace that is already a monorepo has no root app to relocate, so
+    // there is nothing to reference. Adding one would point at a directory
+    // that never existed (e.g. an empty workspace created with
+    // `nest new --no-create-application`).
+    const isConversion = !isMonorepo(host);
     return updateJsonFile(
       host,
       'tsconfig.json',
@@ -169,6 +174,10 @@ function updateTsConfig(projectRoot: string, appName: string) {
 
         if (!tsconfig.references) {
           tsconfig.references = [];
+        }
+
+        if (!isConversion) {
+          return;
         }
 
         // Add reference for the workspace (original) app
@@ -217,11 +226,18 @@ function updatePackageJson(options: SubAppOptions, defaultAppName: string) {
     if (!host.exists('package.json')) {
       return host;
     }
+    const isConversion = !isMonorepo(host);
     return updateJsonFile(
       host,
       'package.json',
       (packageJson: Record<string, Record<string, any>>) => {
-        updateNpmScripts(packageJson.scripts, options, defaultAppName);
+        // Rewriting `format` / `start:prod` / `test:e2e` re-points scripts that
+        // targeted the root app at `apps/<defaultAppName>`. That only makes
+        // sense while converting a standard-mode project; an existing monorepo
+        // has no root app and its scripts are already workspace-scoped.
+        if (isConversion) {
+          updateNpmScripts(packageJson.scripts, options, defaultAppName);
+        }
         updateJestOptions(packageJson.jest, options);
       },
     );

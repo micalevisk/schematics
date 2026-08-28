@@ -7,5 +7,10 @@
     "types": ["node"]
   },
   "include": ["src/lib", "src/utils", "src/index.ts"],
-  "exclude": ["node_modules", "src/**/*.test.ts", "src/**/files/**"]
+  "exclude": [
+    "node_modules",
+    "src/**/*.test.ts",
+    "src/**/files/**",
+    "src/**/workspace/**"
+  ]
 }

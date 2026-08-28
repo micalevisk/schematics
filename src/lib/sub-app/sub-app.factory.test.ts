@@ -202,9 +202,11 @@ describe('SubApp Factory', () => {
     );
 
     const tsconfig = readJson(tree, '/tsconfig.json');
+    // Only the new app is referenced. There is no root app to relocate in a
+    // workspace that is already a monorepo, so no "original app" reference is
+    // added -- it would point at a directory that never existed.
     expect(tsconfig['references']).toEqual([
       { path: './apps/existing-app/tsconfig.app.json' },
-      { path: './apps/nestjs-schematics/tsconfig.app.json' },
       { path: './apps/new-app/tsconfig.app.json' },
     ]);
   });
@@ -280,5 +282,172 @@ describe('SubApp Factory', () => {
     expect(mainContent).toContain(
       "import { ProjectModule } from './project.module.js'",
     );
+  });
+
+  describe('when the workspace was created empty (--no-create-application)', () => {
+    const createEmptyWorkspace = (
+      type: 'esm' | 'cjs' = 'esm',
+    ): Promise<UnitTestTree> =>
+      runner.runSchematic('application', {
+        name: 'my-workspace',
+        type,
+        createApplication: false,
+        directory: '.',
+      } as any);
+
+    it('should add the app without firing any conversion side effects', async () => {
+      let tree = await createEmptyWorkspace();
+      const workspaceFiles = tree.files.sort();
+
+      tree = await runner.runSchematic(
+        'sub-app',
+        { name: 'api' } as SubAppOptions,
+        tree,
+      );
+
+      // Every workspace-root file survives untouched, and the only additions
+      // are under apps/api. Nothing was moved out of a root `src/`/`test/`,
+      // because there was none.
+      expect(tree.files.sort()).toEqual(
+        [
+          ...workspaceFiles,
+          '/apps/api/src/api.controller.spec.ts',
+          '/apps/api/src/api.controller.ts',
+          '/apps/api/src/api.module.ts',
+          '/apps/api/src/api.service.ts',
+          '/apps/api/src/main.ts',
+          '/apps/api/test/app.e2e-spec.ts',
+          '/apps/api/test/jest-e2e.json',
+          '/apps/api/tsconfig.app.json',
+        ].sort(),
+      );
+    });
+
+    it('should register exactly one project and keep no default project', async () => {
+      let tree = await createEmptyWorkspace();
+      tree = await runner.runSchematic(
+        'sub-app',
+        { name: 'api' } as SubAppOptions,
+        tree,
+      );
+
+      const nestCli = readJson(tree, '/nest-cli.json');
+      expect(Object.keys(nestCli['projects'])).toEqual(['api']);
+      expect(nestCli['projects']['api']).toEqual({
+        type: 'application',
+        root: 'apps/api',
+        entryFile: 'main',
+        sourceRoot: 'apps/api/src',
+        compilerOptions: { tsConfigPath: 'apps/api/tsconfig.app.json' },
+      });
+      expect(nestCli['monorepo']).toBe(true);
+      expect(nestCli).not.toHaveProperty('root');
+      expect(nestCli).not.toHaveProperty('sourceRoot');
+      expect(nestCli['compilerOptions']).toEqual({
+        deleteOutDir: true,
+        builder: 'rspack',
+      });
+    });
+
+    it('should reference only the new app in the root tsconfig', async () => {
+      let tree = await createEmptyWorkspace();
+      tree = await runner.runSchematic(
+        'sub-app',
+        { name: 'api' } as SubAppOptions,
+        tree,
+      );
+
+      const tsconfig = readJson(tree, '/tsconfig.json');
+      expect(tsconfig['references']).toEqual([
+        { path: './apps/api/tsconfig.app.json' },
+      ]);
+      expect(tsconfig['files']).toEqual([]);
+      expect(tsconfig['include']).toBeUndefined();
+      expect(tsconfig['exclude']).toBeUndefined();
+    });
+
+    it('should leave the workspace npm scripts untouched', async () => {
+      let tree = await createEmptyWorkspace();
+      const before = readJson(tree, '/package.json')['scripts'];
+
+      tree = await runner.runSchematic(
+        'sub-app',
+        { name: 'api' } as SubAppOptions,
+        tree,
+      );
+
+      // In particular `test:e2e` must not be re-pointed at a root app that
+      // does not exist.
+      expect(readJson(tree, '/package.json')['scripts']).toEqual(before);
+    });
+
+    it('should produce the same apps/<name> tree as the conversion path', async () => {
+      let empty = await createEmptyWorkspace();
+      empty = await runner.runSchematic(
+        'sub-app',
+        { name: 'api' } as SubAppOptions,
+        empty,
+      );
+
+      // The conversion path: a standard-mode project turned into a monorepo by
+      // the very first `nest g app`.
+      let converted: UnitTestTree = await runner.runSchematic('application', {
+        name: 'my-workspace',
+        type: 'esm',
+        directory: '.',
+      } as any);
+      converted = await runner.runSchematic(
+        'sub-app',
+        { name: 'api' } as SubAppOptions,
+        converted,
+      );
+
+      const appFiles = empty.files
+        .filter((file) => file.startsWith('/apps/api/'))
+        .sort();
+      expect(appFiles.length).toBeGreaterThan(0);
+      expect(
+        converted.files.filter((file) => file.startsWith('/apps/api/')).sort(),
+      ).toEqual(appFiles);
+
+      for (const file of appFiles) {
+        expect(empty.readContent(file)).toEqual(converted.readContent(file));
+      }
+    });
+
+    it('should support adding several apps in a row', async () => {
+      let tree = await createEmptyWorkspace();
+      for (const name of ['worker', 'api']) {
+        tree = await runner.runSchematic(
+          'sub-app',
+          { name } as SubAppOptions,
+          tree,
+        );
+      }
+
+      const nestCli = readJson(tree, '/nest-cli.json');
+      expect(Object.keys(nestCli['projects'])).toEqual(['api', 'worker']);
+      expect(readJson(tree, '/tsconfig.json')['references']).toEqual([
+        { path: './apps/worker/tsconfig.app.json' },
+        { path: './apps/api/tsconfig.app.json' },
+      ]);
+    });
+
+    it('should work for a cjs workspace too', async () => {
+      let tree = await createEmptyWorkspace('cjs');
+      tree = await runner.runSchematic(
+        'sub-app',
+        { name: 'api' } as SubAppOptions,
+        tree,
+      );
+
+      expect(readJson(tree, '/nest-cli.json')['projects']).toHaveProperty(
+        'api',
+      );
+      expect(readJson(tree, '/tsconfig.json')['references']).toEqual([
+        { path: './apps/api/tsconfig.app.json' },
+      ]);
+      expect(tree.files).toContain('/jest.config.ts');
+    });
   });
 });
